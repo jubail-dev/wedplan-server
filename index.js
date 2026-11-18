@@ -3,13 +3,14 @@ import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
+import Stripe from "stripe";
 
 const app = express();
 
 app.use(cors());
-app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Better Auth JWKS
 const JWKS = createRemoteJWKSet(
@@ -155,6 +156,106 @@ const usersCollection = db.collection("user");
 const servicesCollection = db.collection("services");
 const bookingsCollection = db.collection("bookings");
 const transactionsCollection = db.collection("transactions");
+
+
+// STRIPE WEBHOOK - VERIFY PAYMENT
+
+app.post(
+  "/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const signature = req.headers["stripe-signature"];
+
+    if (!signature) {
+      return res.status(400).send("Missing Stripe Signature!");
+    }
+
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET,
+      );
+    } catch (error) {
+      console.error("Stripe Webhook Signature Error:", error.message);
+      return res.status(400).send("Invalid Webhook Signature!");
+    }
+
+    try {
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
+
+        // Verify Payment Information
+        const vendorId = session.metadata?.vendorId;
+
+        if (
+          session.payment_status !== "paid" ||
+          session.mode !== "payment" ||
+          session.amount_total !== 9900 ||
+          session.currency !== "usd" ||
+          session.metadata?.plan !== "premium" ||
+          !vendorId ||
+          !ObjectId.isValid(vendorId) ||
+          session.client_reference_id !== vendorId
+        ) {
+          return res.status(400).send("Invalid Payment Information!");
+        }
+
+        // Find Vendor
+        const vendor = await usersCollection.findOne({
+          _id: new ObjectId(vendorId),
+          role: "vendor",
+        });
+
+        if (!vendor) {
+          return res.status(404).send("Vendor Not Found!");
+        }
+
+        // Save Transaction (Prevent Duplicate Records)
+        await transactionsCollection.updateOne(
+          { stripeSessionId: session.id },
+          {
+            $setOnInsert: {
+              vendorId,
+              plan: "premium",
+              amount: session.amount_total / 100,
+              currency: session.currency,
+              stripeSessionId: session.id,
+              stripeSubscriptionId: null,
+              status: "paid",
+              createdAt: new Date(session.created * 1000),
+            },
+          },
+          { upsert: true },
+        );
+
+        // Upgrade Vendor to Premium
+        await usersCollection.updateOne(
+          {
+            _id: new ObjectId(vendorId),
+            role: "vendor",
+          },
+          {
+            $set: {
+              subscriptionPlan: "premium",
+            },
+          },
+        );
+      }
+
+      return res.status(200).send({ received: true });
+    } catch (error) {
+      console.error("Stripe Webhook Processing Error:", error);
+      return res.status(500).send("Webhook Processing Failed!");
+    }
+  },
+);
+
+// Enable JSON Middleware for Other APIs
+app.use(express.json());
+
 
 async function connectToMongoDB() {
   try {
@@ -2148,6 +2249,95 @@ app.delete(
       });
     }
   }
+);
+
+
+
+// VENDOR - CREATE STRIPE CHECKOUT SESSION
+
+app.post(
+  "/vendor/subscription/checkout",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      // Step 1: Find Logged-in Vendor
+      const vendor = await usersCollection.findOne(
+        { _id: new ObjectId(req.user.id) },
+        {
+          projection: {
+            name: 1,
+            email: 1,
+            role: 1,
+            subscriptionPlan: 1,
+          },
+        },
+      );
+
+      if (!vendor || vendor.role !== "vendor") {
+        return res.status(404).send({
+          success: false,
+          message: "Vendor Account Not Found!",
+        });
+      }
+
+      // Step 2: Prevent Existing Premium Vendor
+      if (vendor.subscriptionPlan === "premium") {
+        return res.status(409).send({
+          success: false,
+          message: "You Already Have Lifetime Premium Access!",
+        });
+      }
+
+      // Step 3: Create Stripe Checkout Session
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: "WedPlan Premium Lifetime",
+                description:
+                  "Unlimited Active Services and Premium Vendor Benefits.",
+              },
+              unit_amount: 9900,
+            },
+            quantity: 1,
+          },
+        ],
+
+        client_reference_id: req.user.id,
+
+        customer_email: vendor.email,
+
+        metadata: {
+          vendorId: req.user.id,
+          plan: "premium",
+        },
+
+        success_url: `${process.env.CLIENT_SIDE_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+
+        cancel_url: `${process.env.CLIENT_SIDE_URL}/payment/cancel`,
+      });
+
+      // Step 4: Send Checkout URL
+      return res.status(201).send({
+        success: true,
+        message: "Checkout Session Created Successfully!",
+        url: session.url,
+        sessionId: session.id,
+      });
+    } catch (error) {
+      console.error("Stripe Checkout Session Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Create Checkout Session!",
+      });
+    }
+  },
 );
 
 
