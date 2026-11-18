@@ -438,6 +438,64 @@ app.get(
   },
 );
 
+// ADMIN DASHBOARD STATISTICS API
+app.get(
+  "/admin/dashboard/stats",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      // Get All Dashboard Statistics
+      const [
+        totalUsers,
+        totalVendors,
+        totalCustomers,
+        totalServices,
+        pendingServices,
+        totalTransactions,
+      ] = await Promise.all([
+        usersCollection.countDocuments(),
+
+        usersCollection.countDocuments({
+          role: "vendor",
+        }),
+
+        usersCollection.countDocuments({
+          role: "customer",
+        }),
+
+        servicesCollection.countDocuments(),
+
+        servicesCollection.countDocuments({
+          status: "Pending",
+        }),
+
+        transactionsCollection.countDocuments(),
+      ]);
+
+      // Send Statistics
+      return res.status(200).send({
+        success: true,
+        stats: {
+          totalUsers,
+          totalVendors,
+          totalCustomers,
+          totalServices,
+          pendingServices,
+          totalTransactions,
+        },
+      });
+    } catch (error) {
+      console.error("Admin Dashboard Stats Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch Admin Dashboard Statistics!",
+      });
+    }
+  },
+);
+
  // Get Customer Dashboard Statistics
 app.get(
   "/customer/dashboard/stats",
