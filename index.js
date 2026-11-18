@@ -152,29 +152,152 @@ app.get("/verify-token", verifyToken, (req, res) => {
   });
 });
 
-// Get Customer's Own Bookings
-app.get("/customer/bookings", verifyToken, verifyCustomer, async (req, res) => {
-  try {
-    const bookings = await bookingsCollection
-      .find({ customerId: req.user.id })
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.status(200).send({
-      success: true,
-      bookings,
-    });
-  } catch (error) {
-    console.error("Customer Bookings Error:", error);
-
-    res.status(500).send({
-      message: "Failed to Fetch Bookings!",
-    });
-  }
-});
 
 
-// Create Customer Booking
+ // Get Customer's Own Bookings
+app.get(
+  "/customer/bookings",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const bookings = await bookingsCollection
+        .aggregate([
+          // Step 1: Find Logged-in Customer's Bookings
+          {
+            $match: {
+              customerId: req.user.id,
+            },
+          },
+
+          // Step 2: Sort Latest Bookings First
+          {
+            $sort: {
+              createdAt: -1,
+            },
+          },
+
+          // Step 3: Convert IDs to ObjectId
+          {
+            $addFields: {
+              serviceObjectId: {
+                $convert: {
+                  input: "$serviceId",
+                  to: "objectId",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+              vendorObjectId: {
+                $convert: {
+                  input: "$vendorId",
+                  to: "objectId",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            },
+          },
+
+          // Step 4: Get Service Information
+          {
+            $lookup: {
+              from: "services",
+              let: {
+                serviceId: "$serviceObjectId",
+              },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$_id", "$$serviceId"],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    serviceName: 1,
+                    category: 1,
+                    images: 1,
+                    image: 1,
+                    price: 1,
+                    location: 1,
+                  },
+                },
+              ],
+              as: "service",
+            },
+          },
+
+          // Step 5: Convert Service Array to Object
+          {
+            $unwind: {
+              path: "$service",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+
+          // Step 6: Get Vendor Information
+          {
+            $lookup: {
+              from: "user",
+              let: {
+                vendorId: "$vendorObjectId",
+              },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$_id", "$$vendorId"],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    name: 1,
+                    image: 1,
+                    businessName: 1,
+                    role: 1,
+                  },
+                },
+              ],
+              as: "vendor",
+            },
+          },
+
+          // Step 7: Convert Vendor Array to Object
+          {
+            $unwind: {
+              path: "$vendor",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+
+          // Step 8: Remove Temporary Fields
+          {
+            $project: {
+              serviceObjectId: 0,
+              vendorObjectId: 0,
+            },
+          },
+        ])
+        .toArray();
+
+      res.status(200).send({
+        success: true,
+        bookings,
+      });
+    } catch (error) {
+      console.error("Customer Bookings Error:", error);
+
+      res.status(500).send({
+        message: "Failed to Fetch Bookings!",
+      });
+    }
+  },
+);
+
+
 
 // Create Customer Booking
 app.post(
@@ -282,6 +405,81 @@ app.post(
     }
   },
 );
+
+
+ // Cancel Customer Booking
+app.patch(
+  "/customer/bookings/:id/cancel",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      // Step 1: Get Booking ID
+      const { id } = req.params;
+
+      // Step 2: Validate Booking ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid Booking ID!",
+        });
+      }
+
+      // Step 3: Find Customer's Own Booking
+      const booking = await bookingsCollection.findOne({
+        _id: new ObjectId(id),
+        customerId: req.user.id,
+      });
+
+      if (!booking) {
+        return res.status(404).send({
+          message: "Booking Not Found!",
+        });
+      }
+
+      // Step 4: Check Booking Status
+      if (booking.status !== "Pending") {
+        return res.status(409).send({
+          message: "Only Pending Bookings Can Be Cancelled!",
+        });
+      }
+
+      // Step 5: Cancel Booking
+      const result = await bookingsCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          customerId: req.user.id,
+          status: "Pending",
+        },
+        {
+          $set: {
+            status: "Cancelled",
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      // Step 6: Check Update Result
+      if (result.modifiedCount === 0) {
+        return res.status(409).send({
+          message: "Booking Could Not Be Cancelled!",
+        });
+      }
+
+      // Step 7: Send Success Response
+      return res.status(200).send({
+        success: true,
+        message: "Booking Cancelled Successfully!",
+      });
+    } catch (error) {
+      console.error("Cancel Booking Error:", error);
+
+      return res.status(500).send({
+        message: "Failed to Cancel Booking!",
+      });
+    }
+  },
+);
+
 
 // Start Server
 app.listen(PORT, () => {
