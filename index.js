@@ -119,6 +119,16 @@ function verifyCustomer(req, res, next) {
   next();
 }
 
+function verifyVendor(req, res, next) {
+  if (req.user.role !== "vendor") {
+    return res.status(403).send({
+      message: "Access Denied! Vendor Only.",
+    });
+  }
+
+  next();
+}
+
 // MongoDB Connection
 const client = new MongoClient(process.env.MONGODB_URI);
 
