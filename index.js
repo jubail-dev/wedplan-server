@@ -834,6 +834,98 @@ app.get(
   },
 );
 
+// ADMIN - GET SINGLE SERVICE DETAILS API
+app.get(
+  "/admin/services/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Validate Service ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service ID!",
+        });
+      }
+
+      const services = await servicesCollection
+        .aggregate([
+          {
+            $match: {
+              _id: new ObjectId(id),
+            },
+          },
+          {
+            $lookup: {
+              from: "user",
+              let: {
+                vendorObjectId: {
+                  $convert: {
+                    input: "$vendorId",
+                    to: "objectId",
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+              },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$_id", "$$vendorObjectId"],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    name: 1,
+                    email: 1,
+                    image: 1,
+                    businessName: 1,
+                    role: 1,
+                    subscriptionPlan: 1,
+                    subscriptionExpiresAt: 1,
+                  },
+                },
+              ],
+              as: "vendor",
+            },
+          },
+          {
+            $unwind: {
+              path: "$vendor",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+        ])
+        .toArray();
+
+      // Check if Service Exists
+      if (services.length === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Service Not Found!",
+        });
+      }
+
+      return res.status(200).send({
+        success: true,
+        service: services[0],
+      });
+    } catch (error) {
+      console.error("Admin Get Single Service Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch Service Details!",
+      });
+    }
+  },
+);
+
 
  // Get Customer Dashboard Statistics
 app.get(
