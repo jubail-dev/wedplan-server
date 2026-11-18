@@ -154,6 +154,251 @@ app.get("/", (req, res) => {
   res.send("WedPlan Server is Running!");
 });
 
+
+// GET PUBLIC APPROVED AND AVAILABLE SERVICES
+
+app.get("/services", async (req, res) => {
+  try {
+    // Step 1: Read Search and Filter Parameters
+    const search =
+      typeof req.query.search === "string"
+        ? req.query.search.trim().slice(0, 100)
+        : "";
+
+    const category =
+      typeof req.query.category === "string"
+        ? req.query.category.trim().slice(0, 100)
+        : "";
+
+    const location =
+      typeof req.query.location === "string"
+        ? req.query.location.trim().slice(0, 100)
+        : "";
+
+    // Step 2: Escape Regular Expression Characters
+    const escapeRegex = (value) =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    // Step 3: Build Search Query
+    const query = {
+      status: "Approved",
+      isAvailable: true,
+    };
+
+    if (search) {
+      query.serviceName = {
+        $regex: escapeRegex(search),
+        $options: "i",
+      };
+    }
+
+    if (category) {
+      query.category = {
+        $regex: `^${escapeRegex(category)}$`,
+        $options: "i",
+      };
+    }
+
+    if (location) {
+      query.location = {
+        $regex: escapeRegex(location),
+        $options: "i",
+      };
+    }
+
+    // Step 4: Fetch Services and Vendor Information
+    const services = await servicesCollection
+      .aggregate([
+        {
+          $match: query,
+        },
+
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+
+        {
+          $addFields: {
+            vendorObjectId: {
+              $convert: {
+                input: "$vendorId",
+                to: "objectId",
+                onError: null,
+                onNull: null,
+              },
+            },
+          },
+        },
+
+        {
+          $lookup: {
+            from: "user",
+            let: {
+              vendorId: "$vendorObjectId",
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$_id", "$$vendorId"],
+                  },
+                },
+              },
+              {
+                $project: {
+                  name: 1,
+                  image: 1,
+                  businessName: 1,
+                  role: 1,
+                },
+              },
+            ],
+            as: "vendor",
+          },
+        },
+
+        {
+          $unwind: {
+            path: "$vendor",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+
+        {
+          $project: {
+            vendorObjectId: 0,
+            "vendor.role": 0,
+          },
+        },
+      ])
+      .toArray();
+
+    // Step 5: Send Response
+    return res.status(200).send({
+      success: true,
+      totalServices: services.length,
+      services,
+    });
+  } catch (error) {
+    console.error("Public Services Fetch Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Services!",
+    });
+  }
+});
+
+
+// GET PUBLIC SERVICE DETAILS BY ID
+
+app.get("/services/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Validate Service ID
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid Service ID!",
+      });
+    }
+
+    // Find Approved and Available Service
+    const services = await servicesCollection
+      .aggregate([
+        {
+          $match: {
+            _id: new ObjectId(id),
+            status: "Approved",
+            isAvailable: true,
+          },
+        },
+
+        // Convert Vendor ID
+        {
+          $addFields: {
+            vendorObjectId: {
+              $convert: {
+                input: "$vendorId",
+                to: "objectId",
+                onError: null,
+                onNull: null,
+              },
+            },
+          },
+        },
+
+        // Get Vendor Information
+        {
+          $lookup: {
+            from: "user",
+            let: {
+              vendorId: "$vendorObjectId",
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$_id", "$$vendorId"],
+                  },
+                },
+              },
+              {
+                $project: {
+                  name: 1,
+                  image: 1,
+                  businessName: 1,
+                  role: 1,
+                },
+              },
+            ],
+            as: "vendor",
+          },
+        },
+
+        {
+          $unwind: {
+            path: "$vendor",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+
+        {
+          $project: {
+            vendorObjectId: 0,
+            "vendor.role": 0,
+          },
+        },
+      ])
+      .toArray();
+
+    // Service Not Found
+    if (services.length === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Service Not Found or Currently Unavailable!",
+      });
+    }
+
+    // Successful Response
+    return res.status(200).send({
+      success: true,
+      service: services[0],
+    });
+  } catch (error) {
+    console.error("Service Details Fetch Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Service Details!",
+    });
+  }
+});
+
+
 // Protected Test Route
 app.get("/verify-token", verifyToken, (req, res) => {
   res.send({
