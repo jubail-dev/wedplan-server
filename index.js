@@ -109,6 +109,8 @@ async function verifyToken(req, res, next) {
   }
 }
 
+// Customer Authorization Middleware
+
 function verifyCustomer(req, res, next) {
   if (req.user.role !== "customer") {
     return res.status(403).send({
@@ -119,10 +121,24 @@ function verifyCustomer(req, res, next) {
   next();
 }
 
+// Vendor Authorization Middleware
+
 function verifyVendor(req, res, next) {
   if (req.user.role !== "vendor") {
     return res.status(403).send({
       message: "Access Denied! Vendor Only.",
+    });
+  }
+
+  next();
+}
+
+// Admin Authorization Middleware
+function verifyAdmin(req, res, next) {
+  if (req.user.role !== "admin") {
+    return res.status(403).send({
+      success: false,
+      message: "Access Denied! Admin Only.",
     });
   }
 
@@ -407,6 +423,20 @@ app.get("/verify-token", verifyToken, (req, res) => {
   });
 });
 
+
+// Protected Admin Test Route
+app.get(
+  "/admin/verify",
+  verifyToken,
+  verifyAdmin,
+  (req, res) => {
+    res.status(200).send({
+      success: true,
+      message: "Admin Access Verified Successfully!",
+      user: req.user,
+    });
+  },
+);
 
  // Get Customer Dashboard Statistics
 app.get(
