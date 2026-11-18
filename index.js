@@ -926,6 +926,128 @@ app.get(
   },
 );
 
+// ADMIN - APPROVE / REJECT SERVICE API
+app.patch(
+  "/admin/services/:id/status",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      // Step 1: Validate Service ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service ID!",
+        });
+      }
+
+      // Step 2: Validate Service Status
+      const allowedStatuses = ["Approved", "Rejected"];
+
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service Status!",
+        });
+      }
+
+      // Step 3: Find Service
+      const service = await servicesCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!service) {
+        return res.status(404).send({
+          success: false,
+          message: "Service Not Found!",
+        });
+      }
+
+      // Step 4: Find Vendor
+      if (!ObjectId.isValid(service.vendorId)) {
+        return res.status(404).send({
+          success: false,
+          message: "Vendor Not Found!",
+        });
+      }
+
+      const vendor = await usersCollection.findOne(
+        { _id: new ObjectId(service.vendorId) },
+        {
+          projection: {
+            subscriptionPlan: 1,
+            role: 1,
+          },
+        },
+      );
+
+      if (!vendor || vendor.role !== "vendor") {
+        return res.status(404).send({
+          success: false,
+          message: "Vendor Not Found!",
+        });
+      }
+
+      // Step 5: Check Free Plan Active Service Limit
+      if (
+        status === "Approved" &&
+        vendor.subscriptionPlan !== "premium"
+      ) {
+        const activeServices = await servicesCollection.countDocuments({
+          vendorId: service.vendorId,
+          status: "Approved",
+          isAvailable: { $ne: false },
+          _id: { $ne: new ObjectId(id) },
+        });
+
+        if (activeServices >= 3) {
+          return res.status(403).send({
+            success: false,
+            message:
+              "Free Plan Allows a Maximum of 3 Active Services. Upgrade to Premium for Unlimited Services.",
+          });
+        }
+      }
+
+      // Step 6: Update Service Status
+      const result = await servicesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Service Not Found!",
+        });
+      }
+
+      // Step 7: Send Success Response
+      return res.status(200).send({
+        success: true,
+        message:
+          status === "Approved"
+            ? "Service Approved Successfully!"
+            : "Service Rejected Successfully!",
+      });
+    } catch (error) {
+      console.error("Admin Update Service Status Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Update Service Status!",
+      });
+    }
+  },
+);
 
  // Get Customer Dashboard Statistics
 app.get(
