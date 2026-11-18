@@ -153,6 +153,70 @@ app.get("/verify-token", verifyToken, (req, res) => {
 });
 
 
+ // Get Customer Dashboard Statistics
+app.get(
+  "/customer/dashboard/stats",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const result = await bookingsCollection
+        .aggregate([
+          {
+            $match: {
+              customerId: req.user.id,
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              totalBookings: {
+                $sum: 1,
+              },
+              pendingBookings: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "Pending"] }, 1, 0],
+                },
+              },
+              acceptedBookings: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "Accepted"] }, 1, 0],
+                },
+              },
+              rejectedBookings: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "Rejected"] }, 1, 0],
+                },
+              },
+            },
+          },
+          {
+            $project: {
+              _id: 0,
+            },
+          },
+        ])
+        .toArray();
+
+      return res.status(200).send({
+        success: true,
+        stats: result[0] || {
+          totalBookings: 0,
+          pendingBookings: 0,
+          acceptedBookings: 0,
+          rejectedBookings: 0,
+        },
+      });
+    } catch (error) {
+      console.error("Customer Dashboard Stats Error:", error);
+
+      return res.status(500).send({
+        message: "Failed to Fetch Dashboard Statistics!",
+      });
+    }
+  },
+);
+
 
  // Get Customer's Own Bookings
 app.get(
@@ -479,6 +543,8 @@ app.patch(
     }
   },
 );
+
+
 
 
 // Start Server
