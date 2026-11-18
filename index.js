@@ -496,6 +496,128 @@ app.get(
   },
 );
 
+// ADMIN - GET ALL USERS API
+app.get(
+  "/admin/users",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const search =
+        typeof req.query.search === "string"
+          ? req.query.search.trim()
+          : "";
+
+      const role =
+        typeof req.query.role === "string"
+          ? req.query.role
+          : "";
+
+      const query = {};
+
+      // Search by Name or Email
+      if (search) {
+        const escapedSearch = search.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&",
+        );
+
+        query.$or = [
+          { name: { $regex: escapedSearch, $options: "i" } },
+          { email: { $regex: escapedSearch, $options: "i" } },
+        ];
+      }
+
+      // Filter by Role
+      if (["admin", "vendor", "customer"].includes(role)) {
+        query.role = role;
+      }
+
+      const users = await usersCollection
+        .find(query, {
+          projection: {
+            name: 1,
+            email: 1,
+            image: 1,
+            role: 1,
+            isBlocked: 1,
+            createdAt: 1,
+          },
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      return res.status(200).send({
+        success: true,
+        totalUsers: users.length,
+        users,
+      });
+    } catch (error) {
+      console.error("Admin Get Users Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch Users!",
+      });
+    }
+  },
+);
+
+// ADMIN - GET SINGLE USER DETAILS API
+app.get(
+  "/admin/users/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid User ID!",
+        });
+      }
+
+      const user = await usersCollection.findOne(
+        { _id: new ObjectId(id) },
+        {
+          projection: {
+            name: 1,
+            email: 1,
+            image: 1,
+            role: 1,
+            isBlocked: 1,
+            businessName: 1,
+            subscriptionPlan: 1,
+            subscriptionExpiresAt: 1,
+            createdAt: 1,
+          },
+        },
+      );
+
+      if (!user) {
+        return res.status(404).send({
+          success: false,
+          message: "User Not Found!",
+        });
+      }
+
+      return res.status(200).send({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      console.error("Admin Get User Details Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch User Details!",
+      });
+    }
+  },
+);
+
  // Get Customer Dashboard Statistics
 app.get(
   "/customer/dashboard/stats",
