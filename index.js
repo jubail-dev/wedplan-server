@@ -555,6 +555,38 @@ app.patch(
 );
 
 
+// GET VENDOR'S OWN SERVICES
+
+app.get(
+  "/vendor/services",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const vendorId = req.user.id;
+
+      const services = await servicesCollection
+        .find({ vendorId })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      return res.status(200).send({
+        success: true,
+        services,
+      });
+    } catch (error) {
+      console.error("Fetch Vendor Services Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch Your Services!",
+      });
+    }
+  },
+);
+
+
+
 // VENDOR DASHBOARD STATS API
 
 app.get(
