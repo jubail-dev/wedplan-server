@@ -1049,6 +1049,68 @@ app.patch(
   },
 );
 
+
+
+// ADMIN - DELETE SERVICE API
+app.delete(
+  "/admin/services/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Step 1: Validate Service ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service ID!",
+        });
+      }
+
+      // Step 2: Check Whether Service Exists
+      const service = await servicesCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!service) {
+        return res.status(404).send({
+          success: false,
+          message: "Service Not Found!",
+        });
+      }
+
+      // Step 3: Delete Service
+      const result = await servicesCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Service Could Not Be Deleted!",
+        });
+      }
+
+      // Step 4: Send Success Response
+      return res.status(200).send({
+        success: true,
+        message: "Service Deleted Successfully!",
+      });
+    } catch (error) {
+      console.error("Admin Delete Service Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Delete Service!",
+      });
+    }
+  },
+);
+
+
+
+
  // Get Customer Dashboard Statistics
 app.get(
   "/customer/dashboard/stats",
