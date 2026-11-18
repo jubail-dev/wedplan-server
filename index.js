@@ -619,6 +619,7 @@ app.get(
 
 
 // Create Customer Booking
+
 app.post(
   "/customer/bookings",
   verifyToken,
@@ -672,14 +673,21 @@ app.post(
         });
       }
 
-      // Step 6: Prevent Booking Own Service
+      // Step 6: Check Service Availability
+      if (service.isAvailable !== true) {
+        return res.status(403).send({
+          message: "This Service Is Currently Unavailable for Booking!",
+        });
+      }
+
+      // Step 7: Prevent Booking Own Service
       if (service.vendorId?.toString() === req.user.id) {
         return res.status(403).send({
           message: "You Cannot Book Your Own Service!",
         });
       }
 
-      // Step 7: Check Duplicate Active Booking
+      // Step 8: Check Duplicate Active Booking
       const existingBooking = await bookingsCollection.findOne({
         serviceId: service._id.toString(),
         eventDate: parsedEventDate,
@@ -694,7 +702,7 @@ app.post(
         });
       }
 
-      // Step 8: Prepare Booking Data
+      // Step 9: Prepare Booking Data
       const bookingData = {
         serviceId: service._id.toString(),
         vendorId: service.vendorId.toString(),
@@ -706,10 +714,10 @@ app.post(
         createdAt: new Date(),
       };
 
-      // Step 9: Save Booking
+      // Step 10: Save Booking
       const result = await bookingsCollection.insertOne(bookingData);
 
-      // Step 10: Send Success Response
+      // Step 11: Send Success Response
       return res.status(201).send({
         success: true,
         message: "Booking Request Created Successfully!",
@@ -724,6 +732,7 @@ app.post(
     }
   },
 );
+
 
 
  // Cancel Customer Booking
