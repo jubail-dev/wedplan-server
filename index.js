@@ -586,6 +586,189 @@ app.get(
 );
 
 
+ // GET VENDOR'S OWN BOOKING REQUESTS
+
+app.get(
+  "/vendor/bookings",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const vendorId = req.user.id;
+
+      const bookings = await bookingsCollection
+        .aggregate([
+          // Step 1: Get Only This Vendor's Bookings
+          {
+            $match: {
+              vendorId,
+            },
+          },
+
+          // Step 2: Latest Booking First
+          {
+            $sort: {
+              createdAt: -1,
+            },
+          },
+
+          // Step 3: Convert IDs to ObjectId
+          {
+            $addFields: {
+              serviceObjectId: {
+                $convert: {
+                  input: "$serviceId",
+                  to: "objectId",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+              customerObjectId: {
+                $convert: {
+                  input: "$customerId",
+                  to: "objectId",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            },
+          },
+
+          // Step 4: Get Service Information
+          {
+            $lookup: {
+              from: "services",
+              localField: "serviceObjectId",
+              foreignField: "_id",
+              as: "service",
+            },
+          },
+          {
+            $unwind: {
+              path: "$service",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+
+          // Step 5: Get Customer Information
+          {
+            $lookup: {
+              from: "user",
+              localField: "customerObjectId",
+              foreignField: "_id",
+              pipeline: [
+                {
+                  $project: {
+                    name: 1,
+                    email: 1,
+                    image: 1,
+                    role: 1,
+                  },
+                },
+              ],
+              as: "customer",
+            },
+          },
+          {
+            $unwind: {
+              path: "$customer",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+
+          // Step 6: Remove Temporary Fields
+          {
+            $project: {
+              serviceObjectId: 0,
+              customerObjectId: 0,
+            },
+          },
+        ])
+        .toArray();
+
+      return res.status(200).send({
+        success: true,
+        bookings,
+      });
+    } catch (error) {
+      console.error("Vendor Bookings Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch Booking Requests!",
+      });
+    }
+  },
+);
+
+
+// UPDATE VENDOR BOOKING REQUEST STATUS
+
+app.patch(
+  "/vendor/bookings/:id",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      // Step 1: Validate Booking ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Booking ID!",
+        });
+      }
+
+      // Step 2: Validate Status
+      if (!["Accepted", "Rejected"].includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: "Status Must Be Accepted or Rejected!",
+        });
+      }
+
+      // Step 3: Update Only Pending Booking of Logged-in Vendor
+      const result = await bookingsCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          vendorId: req.user.id,
+          status: "Pending",
+        },
+        {
+          $set: {
+            status,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      // Step 4: Check Update Result
+      if (result.matchedCount === 0) {
+        return res.status(409).send({
+          success: false,
+          message:
+            "Booking Not Found, Unauthorized, or Already Processed!",
+        });
+      }
+
+      // Step 5: Send Success Response
+      return res.status(200).send({
+        success: true,
+        message: `Booking ${status} Successfully!`,
+      });
+    } catch (error) {
+      console.error("Update Booking Status Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Update Booking Status!",
+      });
+    }
+  },
+);
+
 
 // VENDOR DASHBOARD STATS API
 
