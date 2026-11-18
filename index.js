@@ -618,6 +618,223 @@ app.get(
   },
 );
 
+// ADMIN - BLOCK / UNBLOCK USER API
+app.patch(
+  "/admin/users/:id/status",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isBlocked } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid User ID!",
+        });
+      }
+
+      if (typeof isBlocked !== "boolean") {
+        return res.status(400).send({
+          success: false,
+          message: "isBlocked must be a boolean!",
+        });
+      }
+
+      const targetUser = await usersCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!targetUser) {
+        return res.status(404).send({
+          success: false,
+          message: "User Not Found!",
+        });
+      }
+
+      // Prevent Admin Self-Blocking
+      if (targetUser.role === "admin") {
+        return res.status(403).send({
+          success: false,
+          message: "Admin Accounts Cannot Be Blocked!",
+        });
+      }
+
+      await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            isBlocked,
+          },
+        },
+      );
+
+      return res.status(200).send({
+        success: true,
+        message: isBlocked
+          ? "User Blocked Successfully!"
+          : "User Unblocked Successfully!",
+      });
+    } catch (error) {
+      console.error("Admin Update User Status Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Update User Status!",
+      });
+    }
+  },
+);
+
+
+// ADMIN - GET ALL SERVICES API
+app.get(
+  "/admin/services",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { search, category, location, status, isAvailable } = req.query;
+
+      const filters = {};
+
+      // Search by Service Name or Description
+      if (search) {
+        const escapedSearch = String(search)
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        filters.$or = [
+          {
+            serviceName: {
+              $regex: escapedSearch,
+              $options: "i",
+            },
+          },
+          {
+            description: {
+              $regex: escapedSearch,
+              $options: "i",
+            },
+          },
+        ];
+      }
+
+      // Filter by Category
+      if (category) {
+        filters.category = String(category).trim();
+      }
+
+      // Filter by Location
+      if (location) {
+        const escapedLocation = String(location)
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        filters.location = {
+          $regex: escapedLocation,
+          $options: "i",
+        };
+      }
+
+      // Filter by Approval Status
+      const allowedStatuses = ["Pending", "Approved", "Rejected"];
+
+      if (status) {
+        if (!allowedStatuses.includes(String(status))) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Status!",
+          });
+        }
+
+        filters.status = String(status);
+      }
+
+      // Filter by Availability
+      if (isAvailable !== undefined) {
+        if (isAvailable !== "true" && isAvailable !== "false") {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Availability Value!",
+          });
+        }
+
+        filters.isAvailable = isAvailable === "true";
+      }
+
+      // Fetch Services with Vendor Information
+      const services = await servicesCollection
+        .aggregate([
+          {
+            $match: filters,
+          },
+          {
+            $sort: {
+              createdAt: -1,
+            },
+          },
+          {
+            $lookup: {
+              from: "user",
+              let: {
+                vendorObjectId: {
+                  $convert: {
+                    input: "$vendorId",
+                    to: "objectId",
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+              },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$_id", "$$vendorObjectId"],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    name: 1,
+                    email: 1,
+                    image: 1,
+                    businessName: 1,
+                    subscriptionPlan: 1,
+                  },
+                },
+              ],
+              as: "vendor",
+            },
+          },
+          {
+            $unwind: {
+              path: "$vendor",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+        ])
+        .toArray();
+
+      return res.status(200).send({
+        success: true,
+        totalServices: services.length,
+        services,
+      });
+    } catch (error) {
+      console.error("Admin Get Services Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch Services!",
+      });
+    }
+  },
+);
+
+
  // Get Customer Dashboard Statistics
 app.get(
   "/customer/dashboard/stats",
