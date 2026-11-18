@@ -781,6 +781,237 @@ app.post(
 
 
 
+// UPDATE VENDOR'S OWN SERVICE
+
+app.patch(
+  "/vendor/services/:id",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const {
+        serviceName,
+        category,
+        description,
+        price,
+        location,
+        imageUrl,
+        isAvailable,
+        status,
+      } = req.body;
+
+      // Step 1: Validate Service ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service ID!",
+        });
+      }
+
+      // Step 2: Prevent Vendor from Changing Approval Status
+      if (status !== undefined) {
+        return res.status(403).send({
+          success: false,
+          message: "You Cannot Change Service Approval Status!",
+        });
+      }
+
+      // Step 3: Prepare Update Data
+      const updateData = {};
+
+      if (serviceName !== undefined) {
+        if (typeof serviceName !== "string" || !serviceName.trim()) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Name!",
+          });
+        }
+
+        updateData.serviceName = serviceName.trim();
+      }
+
+      if (category !== undefined) {
+        if (typeof category !== "string" || !category.trim()) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Category!",
+          });
+        }
+
+        updateData.category = category.trim();
+      }
+
+      if (description !== undefined) {
+        if (typeof description !== "string" || !description.trim()) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Description!",
+          });
+        }
+
+        updateData.description = description.trim();
+      }
+
+      if (price !== undefined) {
+        if (
+          typeof price !== "number" ||
+          !Number.isFinite(price) ||
+          price <= 0
+        ) {
+          return res.status(400).send({
+            success: false,
+            message: "Price Must Be a Valid Positive Number!",
+          });
+        }
+
+        updateData.price = price;
+      }
+
+      if (location !== undefined) {
+        if (typeof location !== "string" || !location.trim()) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Location!",
+          });
+        }
+
+        updateData.location = location.trim();
+      }
+
+      if (imageUrl !== undefined) {
+        if (typeof imageUrl !== "string" || !imageUrl.trim()) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Image URL!",
+          });
+        }
+
+        let parsedImageUrl;
+
+        try {
+          parsedImageUrl = new URL(imageUrl);
+        } catch {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Image URL!",
+          });
+        }
+
+        if (!["http:", "https:"].includes(parsedImageUrl.protocol)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Image URL!",
+          });
+        }
+
+        updateData.image = imageUrl.trim();
+        updateData.images = [imageUrl.trim()];
+      }
+
+      if (isAvailable !== undefined) {
+        if (typeof isAvailable !== "boolean") {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid Service Availability!",
+          });
+        }
+
+        updateData.isAvailable = isAvailable;
+      }
+
+      // Step 4: Check Whether There Is Anything to Update
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).send({
+          success: false,
+          message: "Please Provide Information to Update!",
+        });
+      }
+
+      // Step 5: Update Only the Logged-in Vendor's Service
+      updateData.updatedAt = new Date();
+
+      const result = await servicesCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          vendorId: req.user.id,
+        },
+        {
+          $set: updateData,
+        },
+      );
+
+      // Step 6: Check Update Result
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Service Not Found or Access Denied!",
+        });
+      }
+
+      // Step 7: Send Success Response
+      return res.status(200).send({
+        success: true,
+        message: "Service Updated Successfully!",
+      });
+    } catch (error) {
+      console.error("Update Vendor Service Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Update Service!",
+      });
+    }
+  },
+);
+
+
+
+// DELETE VENDOR'S OWN SERVICE
+app.delete(
+  "/vendor/services/:id",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid service ID",
+        });
+      }
+
+      const result = await servicesCollection.deleteOne({
+        _id: new ObjectId(id),
+        vendorId: req.user.id,
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Service not found or unauthorized",
+        });
+      }
+
+      return res.status(200).send({
+        success: true,
+        message: "Service deleted successfully",
+      });
+    } catch (error) {
+      console.error("Delete service error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to delete service",
+      });
+    }
+  }
+);
+
+
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`WedPlan Server is running on port ${PORT}`);
