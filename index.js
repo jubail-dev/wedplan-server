@@ -555,6 +555,70 @@ app.patch(
 );
 
 
+// VENDOR DASHBOARD STATS API
+
+app.get(
+  "/vendor/dashboard/stats",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const vendorId = req.user.id;
+
+      const [
+        totalServices,
+        activeServices,
+        pendingBookingRequests,
+        acceptedBookings,
+        user,
+      ] = await Promise.all([
+        servicesCollection.countDocuments({
+          vendorId,
+        }),
+
+        servicesCollection.countDocuments({
+          vendorId,
+          status: "Approved",
+          isAvailable: { $ne: false },
+        }),
+
+        bookingsCollection.countDocuments({
+          vendorId,
+          status: "Pending",
+        }),
+
+        bookingsCollection.countDocuments({
+          vendorId,
+          status: "Accepted",
+        }),
+
+        usersCollection.findOne(
+          { _id: new ObjectId(vendorId) },
+          { projection: { subscriptionPlan: 1 } },
+        ),
+      ]);
+
+      res.send({
+        success: true,
+        stats: {
+          totalServices,
+          activeServices,
+          pendingBookingRequests,
+          acceptedBookings,
+          subscriptionPlan: user?.subscriptionPlan || "free",
+        },
+      });
+    } catch (error) {
+      console.error("Vendor Dashboard Stats Error:", error);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to Load Vendor Dashboard Stats.",
+      });
+    }
+  },
+);
+
 
 
 // Start Server
