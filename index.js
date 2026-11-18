@@ -621,6 +621,134 @@ app.get(
 
 
 
+ // CREATE VENDOR SERVICE
+
+app.post(
+  "/vendor/services",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const {
+        serviceName,
+        category,
+        description,
+        price,
+        location,
+        imageUrl,
+      } = req.body;
+
+      // Step 1: Validate Required Fields
+      if (
+        typeof serviceName !== "string" ||
+        !serviceName.trim() ||
+        typeof category !== "string" ||
+        !category.trim() ||
+        typeof description !== "string" ||
+        !description.trim() ||
+        typeof location !== "string" ||
+        !location.trim() ||
+        typeof imageUrl !== "string" ||
+        !imageUrl.trim() ||
+        typeof price !== "number" ||
+        !Number.isFinite(price) ||
+        price <= 0
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Please Provide Valid Service Information!",
+        });
+      }
+
+      // Step 2: Validate Image URL
+      let parsedImageUrl;
+
+      try {
+        parsedImageUrl = new URL(imageUrl);
+      } catch {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service Image URL!",
+        });
+      }
+
+      if (!["http:", "https:"].includes(parsedImageUrl.protocol)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service Image URL!",
+        });
+      }
+
+      // Step 3: Get Vendor Subscription Plan
+      const vendor = await usersCollection.findOne(
+        { _id: new ObjectId(req.user.id) },
+        { projection: { subscriptionPlan: 1 } },
+      );
+
+      if (!vendor) {
+        return res.status(404).send({
+          success: false,
+          message: "Vendor Account Not Found!",
+        });
+      }
+
+      const subscriptionPlan = vendor.subscriptionPlan || "free";
+
+      // Step 4: Check Free Plan Active Service Limit
+      if (subscriptionPlan === "free") {
+        const activeServices = await servicesCollection.countDocuments({
+          vendorId: req.user.id,
+          status: "Approved",
+          isAvailable: { $ne: false },
+        });
+
+        if (activeServices >= 3) {
+          return res.status(403).send({
+            success: false,
+            message:
+              "Free Plan Allows a Maximum of 3 Active Services. Upgrade to Premium for Unlimited Services.",
+          });
+        }
+      }
+
+      // Step 5: Prepare Service Data
+      const serviceData = {
+        vendorId: req.user.id,
+        serviceName: serviceName.trim(),
+        category: category.trim(),
+        description: description.trim(),
+        price,
+        location: location.trim(),
+        image: imageUrl.trim(),
+        images: [imageUrl.trim()],
+        status: "Pending",
+        isAvailable: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      // Step 6: Save Service
+      const result = await servicesCollection.insertOne(serviceData);
+
+      // Step 7: Send Success Response
+      return res.status(201).send({
+        success: true,
+        message: "Service Submitted Successfully! Waiting for Admin Approval.",
+        serviceId: result.insertedId,
+      });
+    } catch (error) {
+      console.error("Create Vendor Service Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Create Service!",
+      });
+    }
+  },
+);
+
+
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`WedPlan Server is running on port ${PORT}`);
