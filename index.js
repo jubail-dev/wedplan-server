@@ -1152,6 +1152,107 @@ app.patch(
 
 
 
+// ADMIN - UPDATE SERVICE AVAILABILITY API
+app.patch(
+  "/admin/services/:id/availability",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isAvailable } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Service ID!",
+        });
+      }
+
+      if (typeof isAvailable !== "boolean") {
+        return res.status(400).send({
+          success: false,
+          message: "isAvailable must be a boolean!",
+        });
+      }
+
+      const service = await servicesCollection.findOne({
+        _id: new ObjectId(id),
+        status: "Approved",
+      });
+
+      if (!service) {
+        return res.status(404).send({
+          success: false,
+          message: "Approved Service Not Found!",
+        });
+      }
+
+      if (isAvailable) {
+        const vendor = await usersCollection.findOne(
+          { _id: new ObjectId(service.vendorId) },
+          {
+            projection: {
+              subscriptionPlan: 1,
+              role: 1,
+            },
+          },
+        );
+
+        if (!vendor || vendor.role !== "vendor") {
+          return res.status(404).send({
+            success: false,
+            message: "Vendor Not Found!",
+          });
+        }
+
+        if (vendor.subscriptionPlan !== "premium") {
+          const activeServices = await servicesCollection.countDocuments({
+            vendorId: service.vendorId,
+            status: "Approved",
+            isAvailable: { $ne: false },
+            _id: { $ne: new ObjectId(id) },
+          });
+
+          if (activeServices >= 3) {
+            return res.status(403).send({
+              success: false,
+              message:
+                "Free Plan Allows a Maximum of 3 Active Services.",
+            });
+          }
+        }
+      }
+
+      await servicesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            isAvailable,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      return res.status(200).send({
+        success: true,
+        message: isAvailable
+          ? "Service Activated Successfully!"
+          : "Service Deactivated Successfully!",
+      });
+    } catch (error) {
+      console.error("Admin Update Service Availability Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Update Service Availability!",
+      });
+    }
+  },
+);
+
+
+
 // ADMIN - DELETE SERVICE API
 app.delete(
   "/admin/services/:id",
