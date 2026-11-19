@@ -1312,6 +1312,92 @@ app.delete(
 
 
 
+// ADMIN - GET ALL TRANSACTIONS API
+app.get(
+  "/admin/transactions",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const transactions = await transactionsCollection
+        .aggregate([
+          // Step 1: Latest Transactions First
+          {
+            $sort: {
+              createdAt: -1,
+            },
+          },
+
+          // Step 2: Convert Vendor ID
+          {
+            $addFields: {
+              vendorObjectId: {
+                $convert: {
+                  input: "$vendorId",
+                  to: "objectId",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            },
+          },
+
+          // Step 3: Get Vendor Information
+          {
+            $lookup: {
+              from: "user",
+              localField: "vendorObjectId",
+              foreignField: "_id",
+              pipeline: [
+                {
+                  $project: {
+                    name: 1,
+                    email: 1,
+                    image: 1,
+                    businessName: 1,
+                  },
+                },
+              ],
+              as: "vendor",
+            },
+          },
+
+          // Step 4: Convert Vendor Array to Object
+          {
+            $unwind: {
+              path: "$vendor",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+
+          // Step 5: Remove Temporary Field
+          {
+            $project: {
+              vendorObjectId: 0,
+              stripeSessionId: 0,
+              stripeSubscriptionId: 0,
+            },
+          },
+        ])
+        .toArray();
+
+      return res.status(200).send({
+        success: true,
+        totalTransactions: transactions.length,
+        transactions,
+      });
+    } catch (error) {
+      console.error("Admin Get Transactions Error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to Fetch Transactions!",
+      });
+    }
+  },
+);
+
+
 
  // Get Customer Dashboard Statistics
 app.get(
