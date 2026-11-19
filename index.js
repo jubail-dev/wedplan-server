@@ -1092,26 +1092,28 @@ app.patch(
         });
       }
 
-      // Step 5: Check Free Plan Active Service Limit
+      
+      // Step 5: Check Free Plan Service Slot Limit
       if (
         status === "Approved" &&
         vendor.subscriptionPlan !== "premium"
       ) {
-        const activeServices = await servicesCollection.countDocuments({
+        const serviceSlotsUsed = await servicesCollection.countDocuments({
           vendorId: service.vendorId,
-          status: "Approved",
+          status: { $in: ["Pending", "Approved"] },
           isAvailable: { $ne: false },
           _id: { $ne: new ObjectId(id) },
         });
 
-        if (activeServices >= 3) {
+        if (serviceSlotsUsed >= 3) {
           return res.status(403).send({
             success: false,
             message:
-              "Free Plan Allows a Maximum of 3 Active Services. Upgrade to Premium for Unlimited Services.",
+              "Free Plan Allows a Maximum of 3 Services. Upgrade to Premium for Unlimited Services.",
           });
         }
       }
+
 
       // Step 6: Update Service Status
       const result = await servicesCollection.updateOne(
@@ -2017,6 +2019,7 @@ app.patch(
 
 // VENDOR DASHBOARD STATS API
 
+
 app.get(
   "/vendor/dashboard/stats",
   verifyToken,
@@ -2028,6 +2031,8 @@ app.get(
       const [
         totalServices,
         activeServices,
+        pendingServices,
+        serviceSlotsUsed,
         pendingBookingRequests,
         acceptedBookings,
         user,
@@ -2036,9 +2041,23 @@ app.get(
           vendorId,
         }),
 
+        // Approved and available services
         servicesCollection.countDocuments({
           vendorId,
           status: "Approved",
+          isAvailable: { $ne: false },
+        }),
+
+        // Services waiting for admin approval
+        servicesCollection.countDocuments({
+          vendorId,
+          status: "Pending",
+        }),
+
+        // Free Plan: Pending + Approved services occupy slots
+        servicesCollection.countDocuments({
+          vendorId,
+          status: { $in: ["Pending", "Approved"] },
           isAvailable: { $ne: false },
         }),
 
@@ -2063,6 +2082,8 @@ app.get(
         stats: {
           totalServices,
           activeServices,
+          pendingServices,
+          serviceSlotsUsed,
           pendingBookingRequests,
           acceptedBookings,
           subscriptionPlan: user?.subscriptionPlan || "free",
@@ -2082,6 +2103,7 @@ app.get(
 
 
  // CREATE VENDOR SERVICE
+
 
 app.post(
   "/vendor/services",
@@ -2154,19 +2176,19 @@ app.post(
 
       const subscriptionPlan = vendor.subscriptionPlan || "free";
 
-      // Step 4: Check Free Plan Active Service Limit
+      // Step 4: Check Free Plan Service Slot Limit
       if (subscriptionPlan === "free") {
-        const activeServices = await servicesCollection.countDocuments({
+        const serviceSlotsUsed = await servicesCollection.countDocuments({
           vendorId: req.user.id,
-          status: "Approved",
+          status: { $in: ["Pending", "Approved"] },
           isAvailable: { $ne: false },
         });
 
-        if (activeServices >= 3) {
+        if (serviceSlotsUsed >= 3) {
           return res.status(403).send({
             success: false,
             message:
-              "Free Plan Allows a Maximum of 3 Active Services. Upgrade to Premium for Unlimited Services.",
+              "Free Plan Allows a Maximum of 3 Services. Upgrade to Premium for Unlimited Services.",
           });
         }
       }
@@ -2206,7 +2228,6 @@ app.post(
     }
   },
 );
-
 
 
 // UPDATE VENDOR'S OWN SERVICE
