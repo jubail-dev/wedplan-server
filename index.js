@@ -1028,6 +1028,7 @@ app.get(
 );
 
 // ADMIN - APPROVE / REJECT SERVICE API
+
 app.patch(
   "/admin/services/:id/status",
   verifyToken,
@@ -1035,7 +1036,7 @@ app.patch(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const { status } = req.body;
+      const { status } = req.body ?? {};
 
       // Step 1: Validate Service ID
       if (!ObjectId.isValid(id)) {
@@ -1045,10 +1046,8 @@ app.patch(
         });
       }
 
-      // Step 2: Validate Service Status
-      const allowedStatuses = ["Approved", "Rejected"];
-
-      if (!allowedStatuses.includes(status)) {
+      // Step 2: Validate Status
+      if (!["Approved", "Rejected"].includes(status)) {
         return res.status(400).send({
           success: false,
           message: "Invalid Service Status!",
@@ -1092,28 +1091,26 @@ app.patch(
         });
       }
 
-      
-      // Step 5: Check Free Plan Service Slot Limit
+      // Step 5: Check Active Service Limit
       if (
         status === "Approved" &&
         vendor.subscriptionPlan !== "premium"
       ) {
-        const serviceSlotsUsed = await servicesCollection.countDocuments({
+        const activeServices = await servicesCollection.countDocuments({
           vendorId: service.vendorId,
-          status: { $in: ["Pending", "Approved"] },
-          isAvailable: { $ne: false },
+          status: "Approved",
+          isAvailable: true,
           _id: { $ne: new ObjectId(id) },
         });
 
-        if (serviceSlotsUsed >= 3) {
+        if (activeServices >= 3) {
           return res.status(403).send({
             success: false,
             message:
-              "Free Plan Allows a Maximum of 3 Services. Upgrade to Premium for Unlimited Services.",
+              "Free Plan Allows a Maximum of 3 Active Services. Upgrade to Premium for Unlimited Services.",
           });
         }
       }
-
 
       // Step 6: Update Service Status
       const result = await servicesCollection.updateOne(
@@ -1133,7 +1130,6 @@ app.patch(
         });
       }
 
-      // Step 7: Send Success Response
       return res.status(200).send({
         success: true,
         message:
@@ -1151,7 +1147,6 @@ app.patch(
     }
   },
 );
-
 
 
 // ADMIN - UPDATE SERVICE AVAILABILITY API
@@ -2020,6 +2015,7 @@ app.patch(
 // VENDOR DASHBOARD STATS API
 
 
+
 app.get(
   "/vendor/dashboard/stats",
   verifyToken,
@@ -2032,33 +2028,23 @@ app.get(
         totalServices,
         activeServices,
         pendingServices,
-        serviceSlotsUsed,
         pendingBookingRequests,
         acceptedBookings,
         user,
       ] = await Promise.all([
-        servicesCollection.countDocuments({
-          vendorId,
-        }),
+        servicesCollection.countDocuments({ vendorId }),
 
-        // Approved and available services
+        // Only Approved and Available Services
         servicesCollection.countDocuments({
           vendorId,
           status: "Approved",
-          isAvailable: { $ne: false },
+          isAvailable: true,
         }),
 
-        // Services waiting for admin approval
+        // Pending Services are counted separately
         servicesCollection.countDocuments({
           vendorId,
           status: "Pending",
-        }),
-
-        // Free Plan: Pending + Approved services occupy slots
-        servicesCollection.countDocuments({
-          vendorId,
-          status: { $in: ["Pending", "Approved"] },
-          isAvailable: { $ne: false },
         }),
 
         bookingsCollection.countDocuments({
@@ -2077,13 +2063,16 @@ app.get(
         ),
       ]);
 
-      res.send({
+      return res.status(200).send({
         success: true,
         stats: {
           totalServices,
           activeServices,
           pendingServices,
-          serviceSlotsUsed,
+
+          // Keep this field for existing frontend compatibility
+          serviceSlotsUsed: activeServices,
+
           pendingBookingRequests,
           acceptedBookings,
           subscriptionPlan: user?.subscriptionPlan || "free",
@@ -2092,7 +2081,7 @@ app.get(
     } catch (error) {
       console.error("Vendor Dashboard Stats Error:", error);
 
-      res.status(500).send({
+      return res.status(500).send({
         success: false,
         message: "Failed to Load Vendor Dashboard Stats.",
       });
@@ -2102,8 +2091,8 @@ app.get(
 
 
 
- // CREATE VENDOR SERVICE
 
+ // CREATE VENDOR SERVICE
 
 app.post(
   "/vendor/services",
@@ -2118,7 +2107,7 @@ app.post(
         price,
         location,
         imageUrl,
-      } = req.body;
+      } = req.body ?? {};
 
       // Step 1: Validate Required Fields
       if (
@@ -2176,19 +2165,19 @@ app.post(
 
       const subscriptionPlan = vendor.subscriptionPlan || "free";
 
-      // Step 4: Check Free Plan Service Slot Limit
-      if (subscriptionPlan === "free") {
-        const serviceSlotsUsed = await servicesCollection.countDocuments({
+      // Step 4: Check Active Service Limit
+      if (subscriptionPlan !== "premium") {
+        const activeServices = await servicesCollection.countDocuments({
           vendorId: req.user.id,
-          status: { $in: ["Pending", "Approved"] },
-          isAvailable: { $ne: false },
+          status: "Approved",
+          isAvailable: true,
         });
 
-        if (serviceSlotsUsed >= 3) {
+        if (activeServices >= 3) {
           return res.status(403).send({
             success: false,
             message:
-              "Free Plan Allows a Maximum of 3 Services. Upgrade to Premium for Unlimited Services.",
+              "Free Plan Allows a Maximum of 3 Active Services. Upgrade to Premium for Unlimited Services.",
           });
         }
       }
@@ -2212,7 +2201,6 @@ app.post(
       // Step 6: Save Service
       const result = await servicesCollection.insertOne(serviceData);
 
-      // Step 7: Send Success Response
       return res.status(201).send({
         success: true,
         message: "Service Submitted Successfully! Waiting for Admin Approval.",
@@ -2230,9 +2218,8 @@ app.post(
 );
 
 
-
-
 // UPDATE VENDOR'S OWN SERVICE
+
 
 app.patch(
   "/vendor/services/:id",
@@ -2241,6 +2228,7 @@ app.patch(
   async (req, res) => {
     try {
       const { id } = req.params;
+
       const {
         serviceName,
         category,
@@ -2250,7 +2238,7 @@ app.patch(
         imageUrl,
         isAvailable,
         status,
-      } = req.body;
+      } = req.body ?? {};
 
       // Step 1: Validate Service ID
       if (!ObjectId.isValid(id)) {
@@ -2379,7 +2367,55 @@ app.patch(
         });
       }
 
-      // Step 5: Update Only the Logged-in Vendor's Service
+      // Step 5: Find Vendor's Own Service
+      const service = await servicesCollection.findOne({
+        _id: new ObjectId(id),
+        vendorId: req.user.id,
+      });
+
+      if (!service) {
+        return res.status(404).send({
+          success: false,
+          message: "Service Not Found or Access Denied!",
+        });
+      }
+
+      // Step 6: Check Free Plan Limit Before Reactivating
+      if (
+        isAvailable === true &&
+        service.status === "Approved"
+      ) {
+        const vendor = await usersCollection.findOne(
+          { _id: new ObjectId(req.user.id) },
+          { projection: { subscriptionPlan: 1 } },
+        );
+
+        if (!vendor) {
+          return res.status(404).send({
+            success: false,
+            message: "Vendor Account Not Found!",
+          });
+        }
+
+        if (vendor.subscriptionPlan !== "premium") {
+          const activeServices = await servicesCollection.countDocuments({
+            vendorId: req.user.id,
+            status: "Approved",
+            isAvailable: true,
+            _id: { $ne: new ObjectId(id) },
+          });
+
+          if (activeServices >= 3) {
+            return res.status(403).send({
+              success: false,
+              message:
+                "Free Plan Allows a Maximum of 3 Active Services. Upgrade to Premium for Unlimited Services.",
+            });
+          }
+        }
+      }
+
+      // Step 7: Update Only the Logged-in Vendor's Service
       updateData.updatedAt = new Date();
 
       const result = await servicesCollection.updateOne(
@@ -2392,7 +2428,6 @@ app.patch(
         },
       );
 
-      // Step 6: Check Update Result
       if (result.matchedCount === 0) {
         return res.status(404).send({
           success: false,
@@ -2400,7 +2435,6 @@ app.patch(
         });
       }
 
-      // Step 7: Send Success Response
       return res.status(200).send({
         success: true,
         message: "Service Updated Successfully!",
@@ -2415,7 +2449,6 @@ app.patch(
     }
   },
 );
-
 
 
 // DELETE VENDOR'S OWN SERVICE
