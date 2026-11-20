@@ -525,6 +525,175 @@ app.get("/services/:id", async (req, res) => {
   }
 });
 
+
+// GET LOGGED-IN USER PROFILE
+app.get("/profile", verifyToken, async (req, res) => {
+  try {
+    const user = await usersCollection.findOne(
+      { _id: new ObjectId(req.user.id) },
+      {
+        projection: {
+          name: 1,
+          email: 1,
+          image: 1,
+          role: 1,
+          businessName: 1,
+          subscriptionPlan: 1,
+          createdAt: 1,
+        },
+      },
+    );
+
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "User Profile Not Found!",
+      });
+    }
+
+    return res.status(200).send({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    console.error("Get Profile Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Profile!",
+    });
+  }
+});
+
+// UPDATE LOGGED-IN USER PROFILE
+app.patch("/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, image, businessName } = req.body ?? {};
+
+    const updateData = {};
+
+    // Validate Name
+    if (name !== undefined) {
+      if (
+        typeof name !== "string" ||
+        !name.trim() ||
+        name.trim().length > 80
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Name Must Be Between 1 and 80 Characters!",
+        });
+      }
+
+      updateData.name = name.trim();
+    }
+
+    // Validate Profile Image
+    if (image !== undefined) {
+      if (typeof image !== "string" || !image.trim()) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Profile Image URL!",
+        });
+      }
+
+      let parsedImageUrl;
+
+      try {
+        parsedImageUrl = new URL(image);
+      } catch {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Profile Image URL!",
+        });
+      }
+
+      if (!["http:", "https:"].includes(parsedImageUrl.protocol)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Profile Image URL!",
+        });
+      }
+
+      updateData.image = image.trim();
+    }
+
+    // Only Vendors Can Update Business Name
+    if (businessName !== undefined) {
+      if (req.user.role !== "vendor") {
+        return res.status(403).send({
+          success: false,
+          message: "Only Vendors Can Update Business Name!",
+        });
+      }
+
+      if (
+        typeof businessName !== "string" ||
+        !businessName.trim() ||
+        businessName.trim().length > 100
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Business Name Must Be Between 1 and 100 Characters!",
+        });
+      }
+
+      updateData.businessName = businessName.trim();
+    }
+
+    // Check Update Data
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).send({
+        success: false,
+        message: "Please Provide Valid Profile Information!",
+      });
+    }
+
+    updateData.updatedAt = new Date();
+
+    // Update Only Logged-in User
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(req.user.id) },
+      { $set: updateData },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "User Profile Not Found!",
+      });
+    }
+
+    const updatedUser = await usersCollection.findOne(
+      { _id: new ObjectId(req.user.id) },
+      {
+        projection: {
+          name: 1,
+          email: 1,
+          image: 1,
+          role: 1,
+          businessName: 1,
+          subscriptionPlan: 1,
+        },
+      },
+    );
+
+    return res.status(200).send({
+      success: true,
+      message: "Profile Updated Successfully!",
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error("Update Profile Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Update Profile!",
+    });
+  }
+});
+
+
 // Protected Test Route
 app.get("/verify-token", verifyToken, (req, res) => {
   res.send({
