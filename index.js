@@ -157,7 +157,6 @@ const servicesCollection = db.collection("services");
 const bookingsCollection = db.collection("bookings");
 const transactionsCollection = db.collection("transactions");
 
-
 // STRIPE WEBHOOK - VERIFY PAYMENT
 
 app.post(
@@ -256,7 +255,6 @@ app.post(
 // Enable JSON Middleware for Other APIs
 app.use(express.json());
 
-
 async function connectToMongoDB() {
   try {
     await client.connect();
@@ -271,8 +269,8 @@ app.get("/", (req, res) => {
   res.send("WedPlan Server is Running!");
 });
 
-
 // GET PUBLIC APPROVED AND AVAILABLE SERVICES
+
 
 app.get("/services", async (req, res) => {
   try {
@@ -291,6 +289,11 @@ app.get("/services", async (req, res) => {
       typeof req.query.location === "string"
         ? req.query.location.trim().slice(0, 100)
         : "";
+
+    const sort =
+      typeof req.query.sort === "string"
+        ? req.query.sort
+        : "newest";
 
     // Step 2: Escape Regular Expression Characters
     const escapeRegex = (value) =>
@@ -323,7 +326,16 @@ app.get("/services", async (req, res) => {
       };
     }
 
-    // Step 4: Fetch Services and Vendor Information
+    // Step 4: Configure Sorting
+    let sortOption = { createdAt: -1 };
+
+    if (sort === "price-low-to-high") {
+      sortOption = { price: 1, createdAt: -1 };
+    } else if (sort === "price-high-to-low") {
+      sortOption = { price: -1, createdAt: -1 };
+    }
+
+    // Step 5: Fetch Services and Vendor Information
     const services = await servicesCollection
       .aggregate([
         {
@@ -331,9 +343,7 @@ app.get("/services", async (req, res) => {
         },
 
         {
-          $sort: {
-            createdAt: -1,
-          },
+          $sort: sortOption,
         },
 
         {
@@ -368,7 +378,7 @@ app.get("/services", async (req, res) => {
                   name: 1,
                   image: 1,
                   businessName: 1,
-                  role: 1,
+                  subscriptionPlan: 1,
                 },
               },
             ],
@@ -392,7 +402,7 @@ app.get("/services", async (req, res) => {
       ])
       .toArray();
 
-    // Step 5: Send Response
+    // Step 6: Send Response
     return res.status(200).send({
       success: true,
       totalServices: services.length,
@@ -468,7 +478,7 @@ app.get("/services/:id", async (req, res) => {
                   name: 1,
                   image: 1,
                   businessName: 1,
-                  role: 1,
+                  subscriptionPlan: 1,
                 },
               },
             ],
@@ -515,7 +525,6 @@ app.get("/services/:id", async (req, res) => {
   }
 });
 
-
 // Protected Test Route
 app.get("/verify-token", verifyToken, (req, res) => {
   res.send({
@@ -524,20 +533,14 @@ app.get("/verify-token", verifyToken, (req, res) => {
   });
 });
 
-
 // Protected Admin Test Route
-app.get(
-  "/admin/verify",
-  verifyToken,
-  verifyAdmin,
-  (req, res) => {
-    res.status(200).send({
-      success: true,
-      message: "Admin Access Verified Successfully!",
-      user: req.user,
-    });
-  },
-);
+app.get("/admin/verify", verifyToken, verifyAdmin, (req, res) => {
+  res.status(200).send({
+    success: true,
+    message: "Admin Access Verified Successfully!",
+    user: req.user,
+  });
+});
 
 // ADMIN DASHBOARD STATISTICS API
 app.get(
@@ -598,126 +601,108 @@ app.get(
 );
 
 // ADMIN - GET ALL USERS API
-app.get(
-  "/admin/users",
-  verifyToken,
-  verifyAdmin,
-  async (req, res) => {
-    try {
-      const search =
-        typeof req.query.search === "string"
-          ? req.query.search.trim()
-          : "";
+app.get("/admin/users", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
 
-      const role =
-        typeof req.query.role === "string"
-          ? req.query.role
-          : "";
+    const role = typeof req.query.role === "string" ? req.query.role : "";
 
-      const query = {};
+    const query = {};
 
-      // Search by Name or Email
-      if (search) {
-        const escapedSearch = search.replace(
-          /[.*+?^${}()|[\]\\]/g,
-          "\\$&",
-        );
+    // Search by Name or Email
+    if (search) {
+      const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        query.$or = [
-          { name: { $regex: escapedSearch, $options: "i" } },
-          { email: { $regex: escapedSearch, $options: "i" } },
-        ];
-      }
-
-      // Filter by Role
-      if (["admin", "vendor", "customer"].includes(role)) {
-        query.role = role;
-      }
-
-      const users = await usersCollection
-        .find(query, {
-          projection: {
-            name: 1,
-            email: 1,
-            image: 1,
-            role: 1,
-            isBlocked: 1,
-            createdAt: 1,
-          },
-        })
-        .sort({ createdAt: -1 })
-        .toArray();
-
-      return res.status(200).send({
-        success: true,
-        totalUsers: users.length,
-        users,
-      });
-    } catch (error) {
-      console.error("Admin Get Users Error:", error);
-
-      return res.status(500).send({
-        success: false,
-        message: "Failed to Fetch Users!",
-      });
+      query.$or = [
+        { name: { $regex: escapedSearch, $options: "i" } },
+        { email: { $regex: escapedSearch, $options: "i" } },
+      ];
     }
-  },
-);
+
+    // Filter by Role
+    if (["admin", "vendor", "customer"].includes(role)) {
+      query.role = role;
+    }
+
+    const users = await usersCollection
+      .find(query, {
+        projection: {
+          name: 1,
+          email: 1,
+          image: 1,
+          role: 1,
+          isBlocked: 1,
+          createdAt: 1,
+        },
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.status(200).send({
+      success: true,
+      totalUsers: users.length,
+      users,
+    });
+  } catch (error) {
+    console.error("Admin Get Users Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Users!",
+    });
+  }
+});
 
 // ADMIN - GET SINGLE USER DETAILS API
-app.get(
-  "/admin/users/:id",
-  verifyToken,
-  verifyAdmin,
-  async (req, res) => {
-    try {
-      const { id } = req.params;
+app.get("/admin/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
 
-      if (!ObjectId.isValid(id)) {
-        return res.status(400).send({
-          success: false,
-          message: "Invalid User ID!",
-        });
-      }
-
-      const user = await usersCollection.findOne(
-        { _id: new ObjectId(id) },
-        {
-          projection: {
-            name: 1,
-            email: 1,
-            image: 1,
-            role: 1,
-            isBlocked: 1,
-            businessName: 1,
-            subscriptionPlan: 1,
-            subscriptionExpiresAt: 1,
-            createdAt: 1,
-          },
-        },
-      );
-
-      if (!user) {
-        return res.status(404).send({
-          success: false,
-          message: "User Not Found!",
-        });
-      }
-
-      return res.status(200).send({
-        success: true,
-        user,
-      });
-    } catch (error) {
-      console.error("Admin Get User Details Error:", error);
-
-      return res.status(500).send({
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
         success: false,
-        message: "Failed to Fetch User Details!",
+        message: "Invalid User ID!",
       });
     }
-  },
-);
+
+    const user = await usersCollection.findOne(
+      { _id: new ObjectId(id) },
+      {
+        projection: {
+          name: 1,
+          email: 1,
+          image: 1,
+          role: 1,
+          isBlocked: 1,
+          businessName: 1,
+          subscriptionPlan: 1,
+          subscriptionExpiresAt: 1,
+          createdAt: 1,
+        },
+      },
+    );
+
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "User Not Found!",
+      });
+    }
+
+    return res.status(200).send({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    console.error("Admin Get User Details Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch User Details!",
+    });
+  }
+});
 
 // ADMIN - BLOCK / UNBLOCK USER API
 app.patch(
@@ -788,244 +773,233 @@ app.patch(
   },
 );
 
-
 // ADMIN - GET ALL SERVICES API
-app.get(
-  "/admin/services",
-  verifyToken,
-  verifyAdmin,
-  async (req, res) => {
-    try {
-      const { search, category, location, status, isAvailable } = req.query;
+app.get("/admin/services", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { search, category, location, status, isAvailable } = req.query;
 
-      const filters = {};
+    const filters = {};
 
-      // Search by Service Name or Description
-      if (search) {
-        const escapedSearch = String(search)
-          .trim()
-          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Search by Service Name or Description
+    if (search) {
+      const escapedSearch = String(search)
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        filters.$or = [
-          {
-            serviceName: {
-              $regex: escapedSearch,
-              $options: "i",
-            },
+      filters.$or = [
+        {
+          serviceName: {
+            $regex: escapedSearch,
+            $options: "i",
           },
-          {
-            description: {
-              $regex: escapedSearch,
-              $options: "i",
-            },
+        },
+        {
+          description: {
+            $regex: escapedSearch,
+            $options: "i",
           },
-        ];
-      }
-
-      // Filter by Category
-      if (category) {
-        filters.category = String(category).trim();
-      }
-
-      // Filter by Location
-      if (location) {
-        const escapedLocation = String(location)
-          .trim()
-          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-        filters.location = {
-          $regex: escapedLocation,
-          $options: "i",
-        };
-      }
-
-      // Filter by Approval Status
-      const allowedStatuses = ["Pending", "Approved", "Rejected"];
-
-      if (status) {
-        if (!allowedStatuses.includes(String(status))) {
-          return res.status(400).send({
-            success: false,
-            message: "Invalid Service Status!",
-          });
-        }
-
-        filters.status = String(status);
-      }
-
-      // Filter by Availability
-      if (isAvailable !== undefined) {
-        if (isAvailable !== "true" && isAvailable !== "false") {
-          return res.status(400).send({
-            success: false,
-            message: "Invalid Availability Value!",
-          });
-        }
-
-        filters.isAvailable = isAvailable === "true";
-      }
-
-      // Fetch Services with Vendor Information
-      const services = await servicesCollection
-        .aggregate([
-          {
-            $match: filters,
-          },
-          {
-            $sort: {
-              createdAt: -1,
-            },
-          },
-          {
-            $lookup: {
-              from: "user",
-              let: {
-                vendorObjectId: {
-                  $convert: {
-                    input: "$vendorId",
-                    to: "objectId",
-                    onError: null,
-                    onNull: null,
-                  },
-                },
-              },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $eq: ["$_id", "$$vendorObjectId"],
-                    },
-                  },
-                },
-                {
-                  $project: {
-                    name: 1,
-                    email: 1,
-                    image: 1,
-                    businessName: 1,
-                    subscriptionPlan: 1,
-                  },
-                },
-              ],
-              as: "vendor",
-            },
-          },
-          {
-            $unwind: {
-              path: "$vendor",
-              preserveNullAndEmptyArrays: true,
-            },
-          },
-        ])
-        .toArray();
-
-      return res.status(200).send({
-        success: true,
-        totalServices: services.length,
-        services,
-      });
-    } catch (error) {
-      console.error("Admin Get Services Error:", error);
-
-      return res.status(500).send({
-        success: false,
-        message: "Failed to Fetch Services!",
-      });
+        },
+      ];
     }
-  },
-);
 
-// ADMIN - GET SINGLE SERVICE DETAILS API
-app.get(
-  "/admin/services/:id",
-  verifyToken,
-  verifyAdmin,
-  async (req, res) => {
-    try {
-      const { id } = req.params;
+    // Filter by Category
+    if (category) {
+      filters.category = String(category).trim();
+    }
 
-      // Validate Service ID
-      if (!ObjectId.isValid(id)) {
+    // Filter by Location
+    if (location) {
+      const escapedLocation = String(location)
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      filters.location = {
+        $regex: escapedLocation,
+        $options: "i",
+      };
+    }
+
+    // Filter by Approval Status
+    const allowedStatuses = ["Pending", "Approved", "Rejected"];
+
+    if (status) {
+      if (!allowedStatuses.includes(String(status))) {
         return res.status(400).send({
           success: false,
-          message: "Invalid Service ID!",
+          message: "Invalid Service Status!",
         });
       }
 
-      const services = await servicesCollection
-        .aggregate([
-          {
-            $match: {
-              _id: new ObjectId(id),
-            },
+      filters.status = String(status);
+    }
+
+    // Filter by Availability
+    if (isAvailable !== undefined) {
+      if (isAvailable !== "true" && isAvailable !== "false") {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Availability Value!",
+        });
+      }
+
+      filters.isAvailable = isAvailable === "true";
+    }
+
+    // Fetch Services with Vendor Information
+    const services = await servicesCollection
+      .aggregate([
+        {
+          $match: filters,
+        },
+        {
+          $sort: {
+            createdAt: -1,
           },
-          {
-            $lookup: {
-              from: "user",
-              let: {
-                vendorObjectId: {
-                  $convert: {
-                    input: "$vendorId",
-                    to: "objectId",
-                    onError: null,
-                    onNull: null,
+        },
+        {
+          $lookup: {
+            from: "user",
+            let: {
+              vendorObjectId: {
+                $convert: {
+                  input: "$vendorId",
+                  to: "objectId",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$_id", "$$vendorObjectId"],
                   },
                 },
               },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $eq: ["$_id", "$$vendorObjectId"],
-                    },
-                  },
+              {
+                $project: {
+                  name: 1,
+                  email: 1,
+                  image: 1,
+                  businessName: 1,
+                  subscriptionPlan: 1,
                 },
-                {
-                  $project: {
-                    name: 1,
-                    email: 1,
-                    image: 1,
-                    businessName: 1,
-                    role: 1,
-                    subscriptionPlan: 1,
-                    subscriptionExpiresAt: 1,
-                  },
-                },
-              ],
-              as: "vendor",
-            },
+              },
+            ],
+            as: "vendor",
           },
-          {
-            $unwind: {
-              path: "$vendor",
-              preserveNullAndEmptyArrays: true,
-            },
+        },
+        {
+          $unwind: {
+            path: "$vendor",
+            preserveNullAndEmptyArrays: true,
           },
-        ])
-        .toArray();
+        },
+      ])
+      .toArray();
 
-      // Check if Service Exists
-      if (services.length === 0) {
-        return res.status(404).send({
-          success: false,
-          message: "Service Not Found!",
-        });
-      }
+    return res.status(200).send({
+      success: true,
+      totalServices: services.length,
+      services,
+    });
+  } catch (error) {
+    console.error("Admin Get Services Error:", error);
 
-      return res.status(200).send({
-        success: true,
-        service: services[0],
-      });
-    } catch (error) {
-      console.error("Admin Get Single Service Error:", error);
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Services!",
+    });
+  }
+});
 
-      return res.status(500).send({
+// ADMIN - GET SINGLE SERVICE DETAILS API
+app.get("/admin/services/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Validate Service ID
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
         success: false,
-        message: "Failed to Fetch Service Details!",
+        message: "Invalid Service ID!",
       });
     }
-  },
-);
+
+    const services = await servicesCollection
+      .aggregate([
+        {
+          $match: {
+            _id: new ObjectId(id),
+          },
+        },
+        {
+          $lookup: {
+            from: "user",
+            let: {
+              vendorObjectId: {
+                $convert: {
+                  input: "$vendorId",
+                  to: "objectId",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$_id", "$$vendorObjectId"],
+                  },
+                },
+              },
+              {
+                $project: {
+                  name: 1,
+                  email: 1,
+                  image: 1,
+                  businessName: 1,
+                  role: 1,
+                  subscriptionPlan: 1,
+                  subscriptionExpiresAt: 1,
+                },
+              },
+            ],
+            as: "vendor",
+          },
+        },
+        {
+          $unwind: {
+            path: "$vendor",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+      ])
+      .toArray();
+
+    // Check if Service Exists
+    if (services.length === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Service Not Found!",
+      });
+    }
+
+    return res.status(200).send({
+      success: true,
+      service: services[0],
+    });
+  } catch (error) {
+    console.error("Admin Get Single Service Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Service Details!",
+    });
+  }
+});
 
 // ADMIN - APPROVE / REJECT SERVICE API
 
@@ -1092,10 +1066,7 @@ app.patch(
       }
 
       // Step 5: Check Active Service Limit
-      if (
-        status === "Approved" &&
-        vendor.subscriptionPlan !== "premium"
-      ) {
+      if (status === "Approved" && vendor.subscriptionPlan !== "premium") {
         const activeServices = await servicesCollection.countDocuments({
           vendorId: service.vendorId,
           status: "Approved",
@@ -1147,7 +1118,6 @@ app.patch(
     }
   },
 );
-
 
 // ADMIN - UPDATE SERVICE AVAILABILITY API
 app.patch(
@@ -1214,8 +1184,7 @@ app.patch(
           if (activeServices >= 3) {
             return res.status(403).send({
               success: false,
-              message:
-                "Free Plan Allows a Maximum of 3 Active Services.",
+              message: "Free Plan Allows a Maximum of 3 Active Services.",
             });
           }
         }
@@ -1247,8 +1216,6 @@ app.patch(
     }
   },
 );
-
-
 
 // ADMIN - DELETE SERVICE API
 app.delete(
@@ -1307,96 +1274,87 @@ app.delete(
   },
 );
 
-
-
 // ADMIN - GET ALL TRANSACTIONS API
-app.get(
-  "/admin/transactions",
-  verifyToken,
-  verifyAdmin,
-  async (req, res) => {
-    try {
-      const transactions = await transactionsCollection
-        .aggregate([
-          // Step 1: Latest Transactions First
-          {
-            $sort: {
-              createdAt: -1,
-            },
+app.get("/admin/transactions", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const transactions = await transactionsCollection
+      .aggregate([
+        // Step 1: Latest Transactions First
+        {
+          $sort: {
+            createdAt: -1,
           },
+        },
 
-          // Step 2: Convert Vendor ID
-          {
-            $addFields: {
-              vendorObjectId: {
-                $convert: {
-                  input: "$vendorId",
-                  to: "objectId",
-                  onError: null,
-                  onNull: null,
-                },
+        // Step 2: Convert Vendor ID
+        {
+          $addFields: {
+            vendorObjectId: {
+              $convert: {
+                input: "$vendorId",
+                to: "objectId",
+                onError: null,
+                onNull: null,
               },
             },
           },
+        },
 
-          // Step 3: Get Vendor Information
-          {
-            $lookup: {
-              from: "user",
-              localField: "vendorObjectId",
-              foreignField: "_id",
-              pipeline: [
-                {
-                  $project: {
-                    name: 1,
-                    email: 1,
-                    image: 1,
-                    businessName: 1,
-                  },
+        // Step 3: Get Vendor Information
+        {
+          $lookup: {
+            from: "user",
+            localField: "vendorObjectId",
+            foreignField: "_id",
+            pipeline: [
+              {
+                $project: {
+                  name: 1,
+                  email: 1,
+                  image: 1,
+                  businessName: 1,
                 },
-              ],
-              as: "vendor",
-            },
+              },
+            ],
+            as: "vendor",
           },
+        },
 
-          // Step 4: Convert Vendor Array to Object
-          {
-            $unwind: {
-              path: "$vendor",
-              preserveNullAndEmptyArrays: true,
-            },
+        // Step 4: Convert Vendor Array to Object
+        {
+          $unwind: {
+            path: "$vendor",
+            preserveNullAndEmptyArrays: true,
           },
+        },
 
-          // Step 5: Remove Temporary Field
-          {
-            $project: {
-              vendorObjectId: 0,
-              stripeSessionId: 0,
-              stripeSubscriptionId: 0,
-            },
+        // Step 5: Remove Temporary Field
+        {
+          $project: {
+            vendorObjectId: 0,
+            stripeSessionId: 0,
+            stripeSubscriptionId: 0,
           },
-        ])
-        .toArray();
+        },
+      ])
+      .toArray();
 
-      return res.status(200).send({
-        success: true,
-        totalTransactions: transactions.length,
-        transactions,
-      });
-    } catch (error) {
-      console.error("Admin Get Transactions Error:", error);
+    return res.status(200).send({
+      success: true,
+      totalTransactions: transactions.length,
+      transactions,
+    });
+  } catch (error) {
+    console.error("Admin Get Transactions Error:", error);
 
-      return res.status(500).send({
-        success: false,
-        message: "Failed to Fetch Transactions!",
-      });
-    }
-  },
-);
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Transactions!",
+    });
+  }
+});
 
-
-
- // Get Customer Dashboard Statistics
+// Get Customer Dashboard Statistics
 app.get(
   "/customer/dashboard/stats",
   verifyToken,
@@ -1460,151 +1418,143 @@ app.get(
   },
 );
 
-
- // Get Customer's Own Bookings
-app.get(
-  "/customer/bookings",
-  verifyToken,
-  verifyCustomer,
-  async (req, res) => {
-    try {
-      const bookings = await bookingsCollection
-        .aggregate([
-          // Step 1: Find Logged-in Customer's Bookings
-          {
-            $match: {
-              customerId: req.user.id,
-            },
+// Get Customer's Own Bookings
+app.get("/customer/bookings", verifyToken, verifyCustomer, async (req, res) => {
+  try {
+    const bookings = await bookingsCollection
+      .aggregate([
+        // Step 1: Find Logged-in Customer's Bookings
+        {
+          $match: {
+            customerId: req.user.id,
           },
+        },
 
-          // Step 2: Sort Latest Bookings First
-          {
-            $sort: {
-              createdAt: -1,
-            },
+        // Step 2: Sort Latest Bookings First
+        {
+          $sort: {
+            createdAt: -1,
           },
+        },
 
-          // Step 3: Convert IDs to ObjectId
-          {
-            $addFields: {
-              serviceObjectId: {
-                $convert: {
-                  input: "$serviceId",
-                  to: "objectId",
-                  onError: null,
-                  onNull: null,
-                },
+        // Step 3: Convert IDs to ObjectId
+        {
+          $addFields: {
+            serviceObjectId: {
+              $convert: {
+                input: "$serviceId",
+                to: "objectId",
+                onError: null,
+                onNull: null,
               },
-              vendorObjectId: {
-                $convert: {
-                  input: "$vendorId",
-                  to: "objectId",
-                  onError: null,
-                  onNull: null,
-                },
+            },
+            vendorObjectId: {
+              $convert: {
+                input: "$vendorId",
+                to: "objectId",
+                onError: null,
+                onNull: null,
               },
             },
           },
+        },
 
-          // Step 4: Get Service Information
-          {
-            $lookup: {
-              from: "services",
-              let: {
-                serviceId: "$serviceObjectId",
+        // Step 4: Get Service Information
+        {
+          $lookup: {
+            from: "services",
+            let: {
+              serviceId: "$serviceObjectId",
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$_id", "$$serviceId"],
+                  },
+                },
               },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $eq: ["$_id", "$$serviceId"],
-                    },
-                  },
+              {
+                $project: {
+                  serviceName: 1,
+                  category: 1,
+                  images: 1,
+                  image: 1,
+                  price: 1,
+                  location: 1,
                 },
-                {
-                  $project: {
-                    serviceName: 1,
-                    category: 1,
-                    images: 1,
-                    image: 1,
-                    price: 1,
-                    location: 1,
-                  },
-                },
-              ],
-              as: "service",
-            },
-          },
-
-          // Step 5: Convert Service Array to Object
-          {
-            $unwind: {
-              path: "$service",
-              preserveNullAndEmptyArrays: true,
-            },
-          },
-
-          // Step 6: Get Vendor Information
-          {
-            $lookup: {
-              from: "user",
-              let: {
-                vendorId: "$vendorObjectId",
               },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $eq: ["$_id", "$$vendorId"],
-                    },
+            ],
+            as: "service",
+          },
+        },
+
+        // Step 5: Convert Service Array to Object
+        {
+          $unwind: {
+            path: "$service",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+
+        // Step 6: Get Vendor Information
+        {
+          $lookup: {
+            from: "user",
+            let: {
+              vendorId: "$vendorObjectId",
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$_id", "$$vendorId"],
                   },
                 },
-                {
-                  $project: {
-                    name: 1,
-                    image: 1,
-                    businessName: 1,
-                    role: 1,
-                  },
+              },
+              {
+                $project: {
+                  name: 1,
+                  image: 1,
+                  businessName: 1,
+                  role: 1,
                 },
-              ],
-              as: "vendor",
-            },
+              },
+            ],
+            as: "vendor",
           },
+        },
 
-          // Step 7: Convert Vendor Array to Object
-          {
-            $unwind: {
-              path: "$vendor",
-              preserveNullAndEmptyArrays: true,
-            },
+        // Step 7: Convert Vendor Array to Object
+        {
+          $unwind: {
+            path: "$vendor",
+            preserveNullAndEmptyArrays: true,
           },
+        },
 
-          // Step 8: Remove Temporary Fields
-          {
-            $project: {
-              serviceObjectId: 0,
-              vendorObjectId: 0,
-            },
+        // Step 8: Remove Temporary Fields
+        {
+          $project: {
+            serviceObjectId: 0,
+            vendorObjectId: 0,
           },
-        ])
-        .toArray();
+        },
+      ])
+      .toArray();
 
-      res.status(200).send({
-        success: true,
-        bookings,
-      });
-    } catch (error) {
-      console.error("Customer Bookings Error:", error);
+    res.status(200).send({
+      success: true,
+      bookings,
+    });
+  } catch (error) {
+    console.error("Customer Bookings Error:", error);
 
-      res.status(500).send({
-        message: "Failed to Fetch Bookings!",
-      });
-    }
-  },
-);
-
-
+    res.status(500).send({
+      message: "Failed to Fetch Bookings!",
+    });
+  }
+});
 
 // Create Customer Booking
 
@@ -1721,9 +1671,7 @@ app.post(
   },
 );
 
-
-
- // Cancel Customer Booking
+// Cancel Customer Booking
 app.patch(
   "/customer/bookings/:id/cancel",
   verifyToken,
@@ -1796,153 +1744,140 @@ app.patch(
   },
 );
 
-
 // GET VENDOR'S OWN SERVICES
 
-app.get(
-  "/vendor/services",
-  verifyToken,
-  verifyVendor,
-  async (req, res) => {
-    try {
-      const vendorId = req.user.id;
+app.get("/vendor/services", verifyToken, verifyVendor, async (req, res) => {
+  try {
+    const vendorId = req.user.id;
 
-      const services = await servicesCollection
-        .find({ vendorId })
-        .sort({ createdAt: -1 })
-        .toArray();
+    const services = await servicesCollection
+      .find({ vendorId })
+      .sort({ createdAt: -1 })
+      .toArray();
 
-      return res.status(200).send({
-        success: true,
-        services,
-      });
-    } catch (error) {
-      console.error("Fetch Vendor Services Error:", error);
+    return res.status(200).send({
+      success: true,
+      services,
+    });
+  } catch (error) {
+    console.error("Fetch Vendor Services Error:", error);
 
-      return res.status(500).send({
-        success: false,
-        message: "Failed to Fetch Your Services!",
-      });
-    }
-  },
-);
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Your Services!",
+    });
+  }
+});
 
+// GET VENDOR'S OWN BOOKING REQUESTS
 
- // GET VENDOR'S OWN BOOKING REQUESTS
+app.get("/vendor/bookings", verifyToken, verifyVendor, async (req, res) => {
+  try {
+    const vendorId = req.user.id;
 
-app.get(
-  "/vendor/bookings",
-  verifyToken,
-  verifyVendor,
-  async (req, res) => {
-    try {
-      const vendorId = req.user.id;
-
-      const bookings = await bookingsCollection
-        .aggregate([
-          // Step 1: Get Only This Vendor's Bookings
-          {
-            $match: {
-              vendorId,
-            },
+    const bookings = await bookingsCollection
+      .aggregate([
+        // Step 1: Get Only This Vendor's Bookings
+        {
+          $match: {
+            vendorId,
           },
+        },
 
-          // Step 2: Latest Booking First
-          {
-            $sort: {
-              createdAt: -1,
-            },
+        // Step 2: Latest Booking First
+        {
+          $sort: {
+            createdAt: -1,
           },
+        },
 
-          // Step 3: Convert IDs to ObjectId
-          {
-            $addFields: {
-              serviceObjectId: {
-                $convert: {
-                  input: "$serviceId",
-                  to: "objectId",
-                  onError: null,
-                  onNull: null,
-                },
+        // Step 3: Convert IDs to ObjectId
+        {
+          $addFields: {
+            serviceObjectId: {
+              $convert: {
+                input: "$serviceId",
+                to: "objectId",
+                onError: null,
+                onNull: null,
               },
-              customerObjectId: {
-                $convert: {
-                  input: "$customerId",
-                  to: "objectId",
-                  onError: null,
-                  onNull: null,
-                },
+            },
+            customerObjectId: {
+              $convert: {
+                input: "$customerId",
+                to: "objectId",
+                onError: null,
+                onNull: null,
               },
             },
           },
+        },
 
-          // Step 4: Get Service Information
-          {
-            $lookup: {
-              from: "services",
-              localField: "serviceObjectId",
-              foreignField: "_id",
-              as: "service",
-            },
+        // Step 4: Get Service Information
+        {
+          $lookup: {
+            from: "services",
+            localField: "serviceObjectId",
+            foreignField: "_id",
+            as: "service",
           },
-          {
-            $unwind: {
-              path: "$service",
-              preserveNullAndEmptyArrays: true,
-            },
+        },
+        {
+          $unwind: {
+            path: "$service",
+            preserveNullAndEmptyArrays: true,
           },
+        },
 
-          // Step 5: Get Customer Information
-          {
-            $lookup: {
-              from: "user",
-              localField: "customerObjectId",
-              foreignField: "_id",
-              pipeline: [
-                {
-                  $project: {
-                    name: 1,
-                    email: 1,
-                    image: 1,
-                    role: 1,
-                  },
+        // Step 5: Get Customer Information
+        {
+          $lookup: {
+            from: "user",
+            localField: "customerObjectId",
+            foreignField: "_id",
+            pipeline: [
+              {
+                $project: {
+                  name: 1,
+                  email: 1,
+                  image: 1,
+                  role: 1,
                 },
-              ],
-              as: "customer",
-            },
+              },
+            ],
+            as: "customer",
           },
-          {
-            $unwind: {
-              path: "$customer",
-              preserveNullAndEmptyArrays: true,
-            },
+        },
+        {
+          $unwind: {
+            path: "$customer",
+            preserveNullAndEmptyArrays: true,
           },
+        },
 
-          // Step 6: Remove Temporary Fields
-          {
-            $project: {
-              serviceObjectId: 0,
-              customerObjectId: 0,
-            },
+        // Step 6: Remove Temporary Fields
+        {
+          $project: {
+            serviceObjectId: 0,
+            customerObjectId: 0,
           },
-        ])
-        .toArray();
+        },
+      ])
+      .toArray();
 
-      return res.status(200).send({
-        success: true,
-        bookings,
-      });
-    } catch (error) {
-      console.error("Vendor Bookings Error:", error);
+    return res.status(200).send({
+      success: true,
+      bookings,
+    });
+  } catch (error) {
+    console.error("Vendor Bookings Error:", error);
 
-      return res.status(500).send({
-        success: false,
-        message: "Failed to Fetch Booking Requests!",
-      });
-    }
-  },
-);
-
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Fetch Booking Requests!",
+    });
+  }
+});
 
 // UPDATE VENDOR BOOKING REQUEST STATUS
 
@@ -1990,8 +1925,7 @@ app.patch(
       if (result.matchedCount === 0) {
         return res.status(409).send({
           success: false,
-          message:
-            "Booking Not Found, Unauthorized, or Already Processed!",
+          message: "Booking Not Found, Unauthorized, or Already Processed!",
         });
       }
 
@@ -2011,9 +1945,7 @@ app.patch(
   },
 );
 
-
 // VENDOR DASHBOARD STATS API
-
 
 app.get(
   "/vendor/dashboard/stats",
@@ -2096,138 +2028,120 @@ app.get(
   },
 );
 
+// CREATE VENDOR SERVICE
 
+app.post("/vendor/services", verifyToken, verifyVendor, async (req, res) => {
+  try {
+    const { serviceName, category, description, price, location, imageUrl } =
+      req.body ?? {};
 
- // CREATE VENDOR SERVICE
-
-
-app.post(
-  "/vendor/services",
-  verifyToken,
-  verifyVendor,
-  async (req, res) => {
-    try {
-      const {
-        serviceName,
-        category,
-        description,
-        price,
-        location,
-        imageUrl,
-      } = req.body ?? {};
-
-      // Step 1: Validate Required Fields
-      if (
-        typeof serviceName !== "string" ||
-        !serviceName.trim() ||
-        typeof category !== "string" ||
-        !category.trim() ||
-        typeof description !== "string" ||
-        !description.trim() ||
-        typeof location !== "string" ||
-        !location.trim() ||
-        typeof imageUrl !== "string" ||
-        !imageUrl.trim() ||
-        typeof price !== "number" ||
-        !Number.isFinite(price) ||
-        price <= 0
-      ) {
-        return res.status(400).send({
-          success: false,
-          message: "Please Provide Valid Service Information!",
-        });
-      }
-
-      // Step 2: Validate Image URL
-      let parsedImageUrl;
-
-      try {
-        parsedImageUrl = new URL(imageUrl);
-      } catch {
-        return res.status(400).send({
-          success: false,
-          message: "Invalid Service Image URL!",
-        });
-      }
-
-      if (!["http:", "https:"].includes(parsedImageUrl.protocol)) {
-        return res.status(400).send({
-          success: false,
-          message: "Invalid Service Image URL!",
-        });
-      }
-
-      // Step 3: Get Vendor Subscription Plan
-      const vendor = await usersCollection.findOne(
-        { _id: new ObjectId(req.user.id) },
-        { projection: { subscriptionPlan: 1 } },
-      );
-
-      if (!vendor) {
-        return res.status(404).send({
-          success: false,
-          message: "Vendor Account Not Found!",
-        });
-      }
-
-      const subscriptionPlan = vendor.subscriptionPlan || "free";
-
-      // Step 4: Check Free Plan Service Slot Limit
-      if (subscriptionPlan !== "premium") {
-        const serviceSlotsUsed = await servicesCollection.countDocuments({
-          vendorId: req.user.id,
-          status: { $in: ["Pending", "Approved"] },
-        });
-
-        if (serviceSlotsUsed >= 3) {
-          return res.status(403).send({
-            success: false,
-            message:
-              "Free Plan Allows a Maximum of 3 Services. Upgrade to Premium for Unlimited Services.",
-          });
-        }
-      }
-
-      // Step 5: Prepare Service Data
-      const serviceData = {
-        vendorId: req.user.id,
-        serviceName: serviceName.trim(),
-        category: category.trim(),
-        description: description.trim(),
-        price,
-        location: location.trim(),
-        image: imageUrl.trim(),
-        images: [imageUrl.trim()],
-        status: "Pending",
-        isAvailable: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      // Step 6: Save Service
-      const result = await servicesCollection.insertOne(serviceData);
-
-      return res.status(201).send({
-        success: true,
-        message:
-          "Service Submitted Successfully! Waiting for Admin Approval.",
-        serviceId: result.insertedId,
-      });
-    } catch (error) {
-      console.error("Create Vendor Service Error:", error);
-
-      return res.status(500).send({
+    // Step 1: Validate Required Fields
+    if (
+      typeof serviceName !== "string" ||
+      !serviceName.trim() ||
+      typeof category !== "string" ||
+      !category.trim() ||
+      typeof description !== "string" ||
+      !description.trim() ||
+      typeof location !== "string" ||
+      !location.trim() ||
+      typeof imageUrl !== "string" ||
+      !imageUrl.trim() ||
+      typeof price !== "number" ||
+      !Number.isFinite(price) ||
+      price <= 0
+    ) {
+      return res.status(400).send({
         success: false,
-        message: "Failed to Create Service!",
+        message: "Please Provide Valid Service Information!",
       });
     }
-  },
-);
 
+    // Step 2: Validate Image URL
+    let parsedImageUrl;
 
+    try {
+      parsedImageUrl = new URL(imageUrl);
+    } catch {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid Service Image URL!",
+      });
+    }
+
+    if (!["http:", "https:"].includes(parsedImageUrl.protocol)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid Service Image URL!",
+      });
+    }
+
+    // Step 3: Get Vendor Subscription Plan
+    const vendor = await usersCollection.findOne(
+      { _id: new ObjectId(req.user.id) },
+      { projection: { subscriptionPlan: 1 } },
+    );
+
+    if (!vendor) {
+      return res.status(404).send({
+        success: false,
+        message: "Vendor Account Not Found!",
+      });
+    }
+
+    const subscriptionPlan = vendor.subscriptionPlan || "free";
+
+    // Step 4: Check Free Plan Service Slot Limit
+    if (subscriptionPlan !== "premium") {
+      const serviceSlotsUsed = await servicesCollection.countDocuments({
+        vendorId: req.user.id,
+        status: { $in: ["Pending", "Approved"] },
+      });
+
+      if (serviceSlotsUsed >= 3) {
+        return res.status(403).send({
+          success: false,
+          message:
+            "Free Plan Allows a Maximum of 3 Services. Upgrade to Premium for Unlimited Services.",
+        });
+      }
+    }
+
+    // Step 5: Prepare Service Data
+    const serviceData = {
+      vendorId: req.user.id,
+      serviceName: serviceName.trim(),
+      category: category.trim(),
+      description: description.trim(),
+      price,
+      location: location.trim(),
+      image: imageUrl.trim(),
+      images: [imageUrl.trim()],
+      status: "Pending",
+      isAvailable: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    // Step 6: Save Service
+    const result = await servicesCollection.insertOne(serviceData);
+
+    return res.status(201).send({
+      success: true,
+      message: "Service Submitted Successfully! Waiting for Admin Approval.",
+      serviceId: result.insertedId,
+    });
+  } catch (error) {
+    console.error("Create Vendor Service Error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to Create Service!",
+    });
+  }
+});
 
 // UPDATE VENDOR'S OWN SERVICE
-
 
 app.patch(
   "/vendor/services/:id",
@@ -2389,10 +2303,7 @@ app.patch(
       }
 
       // Step 6: Check Free Plan Limit Before Reactivating
-      if (
-        isAvailable === true &&
-        service.status === "Approved"
-      ) {
+      if (isAvailable === true && service.status === "Approved") {
         const vendor = await usersCollection.findOne(
           { _id: new ObjectId(req.user.id) },
           { projection: { subscriptionPlan: 1 } },
@@ -2458,7 +2369,6 @@ app.patch(
   },
 );
 
-
 // DELETE VENDOR'S OWN SERVICE
 app.delete(
   "/vendor/services/:id",
@@ -2499,10 +2409,8 @@ app.delete(
         message: "Failed to delete service",
       });
     }
-  }
+  },
 );
-
-
 
 // VENDOR - CREATE STRIPE CHECKOUT SESSION
 
@@ -2590,8 +2498,6 @@ app.post(
     }
   },
 );
-
-
 
 // Start Server
 app.listen(PORT, () => {
